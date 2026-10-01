@@ -6,7 +6,7 @@
 <meta name="color-scheme" content="light">
 <meta name="theme-color" content="#0F4C5C">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src https://script.google.com https://script.googleusercontent.com ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:*; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; worker-src blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src https://script.google.com https://script.googleusercontent.com ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:*; base-uri 'none'; form-action 'none'">
 <title>Work Order Register</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -551,12 +551,11 @@ const CONFIG = {
   API_URL: 'https://script.google.com/macros/s/AKfycbytzDGTar81eOjCfRXmdGW8TE7BWaHnstfyIAi03o5N5AiTps75xX0R3JsX7LpraGyxcg/exec',        // e.g. https://script.google.com/macros/s/AKfy…/exec
 
   // Defaults — overwritten by the server's meta on every load (single source of truth)
-  MAX_FILE_BYTES: 5 * 1024 * 1024,
+    MAX_FILE_BYTES: 10 * 1024 * 1024,
   ALLOWED_EXT: { pdf:'application/pdf', jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', webp:'image/webp' },
 
-  MAX_IMAGE_INPUT: 25 * 1024 * 1024,             // largest raw photo we will try to shrink
-  COMPRESS_ABOVE: 1.5 * 1024 * 1024,             // shrink photos bigger than this
-  IMAGE_MAX_DIM: 2400,
+  MAX_IMAGE_INPUT: 60 * 1024 * 1024,             // largest raw photo we will try to compress
+  MAX_PDF_INPUT: 100 * 1024 * 1024,              // largest PDF we will try to compress
   PAGE_SIZES: [10, 25, 50, 100],
   FACETS: ['site', 'customer', 'company', 'clusterHead', 'responsible'],   // multi-select filters
   TYPE_KEY: 'workType',                                                    // segmented control
@@ -648,7 +647,7 @@ const Api = {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', CONFIG.API_URL);
       xhr.setRequestHeader('Content-Type', 'text/plain;charset=utf-8');   // “simple” request → no CORS pre-flight
-      xhr.timeout = 180000;
+            xhr.timeout = 300000;
       xhr.upload.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
       xhr.upload.onload = () => onProgress(1);
       xhr.onload = () => {
@@ -1020,25 +1019,85 @@ function validateFile(f) {
   if (!mime) return 'Unsupported file type — use PDF, JPG, PNG or WebP.';
   if (f.type && !MIMES().includes(f.type)) return 'Unsupported file type — use PDF, JPG, PNG or WebP.';
   if (f.size === 0) return 'This file is empty.';
-  const img = mime.startsWith('image/');
-  if (!img && f.size > CONFIG.MAX_FILE_BYTES) return `File is ${fmtBytes(f.size)} — the limit is ${fmtBytes(CONFIG.MAX_FILE_BYTES)}.`;
-  if (img && f.size > CONFIG.MAX_IMAGE_INPUT) return `Image is ${fmtBytes(f.size)} — too large to process.`;
+  const img = mime.startsWith('image/'), cap = img ? CONFIG.MAX_IMAGE_INPUT : CONFIG.MAX_PDF_INPUT;
+  if (f.size > cap) return `${img ? 'Image' : 'PDF'} is ${fmtBytes(f.size)} — too large to process (max ${fmtBytes(cap)}).`;
   return '';
 }
 async function shrinkImage(file) {
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('decode')); i.src = url; });
-    const scale = Math.min(1, CONFIG.IMAGE_MAX_DIM / Math.max(img.naturalWidth, img.naturalHeight));
-    const w = Math.max(1, Math.round(img.naturalWidth * scale)), h = Math.max(1, Math.round(img.naturalHeight * scale));
-    const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
-    const ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h); ctx.drawImage(img, 0, 0, w, h);
-    for (const q of [0.86, 0.72, 0.58, 0.45]) {
-      const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', q));
-      if (blob && blob.size <= CONFIG.MAX_FILE_BYTES) return blob;
+    const longest = Math.max(img.naturalWidth, img.naturalHeight);
+    const cv = document.createElement('canvas'), ctx = cv.getContext('2d');
+    // Try the largest size / best quality first and step down only until the file fits.
+    const scales = [...new Set([4096, 3200, 2400, 1800].map(d => Math.min(1, d / longest)))];
+    for (const scale of scales) {
+      cv.width = Math.max(1, Math.round(img.naturalWidth * scale));
+      cv.height = Math.max(1, Math.round(img.naturalHeight * scale));
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+      ctx.drawImage(img, 0, 0, cv.width, cv.height);
+      for (const q of [0.9, 0.8, 0.7, 0.55]) {
+        const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', q));
+        if (blob && blob.size <= CONFIG.MAX_FILE_BYTES) return blob;
+      }
     }
     return null;
   } finally { URL.revokeObjectURL(url); }
+}
+
+/* PDF compression — PDF.js + pdf-lib are loaded from cdnjs only when a PDF is over the size limit */
+const PDF_LIBS = {
+  pdfjs:  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
+  worker: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js',
+  pdflib: 'https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js'
+};
+const loadScript = src => new Promise((res, rej) => {
+  const s = document.createElement('script'); s.src = src; s.async = true;
+  s.onload = res; s.onerror = () => rej(new Error('Could not load ' + src));
+  document.head.appendChild(s);
+});
+async function ensurePdfLibs() {
+  if (!window.pdfjsLib) await loadScript(PDF_LIBS.pdfjs);
+  if (!window.PDFLib) await loadScript(PDF_LIBS.pdflib);
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDF_LIBS.worker;
+}
+async function shrinkPdf(file, onStep) {
+  await ensurePdfLibs();
+  const limit = CONFIG.MAX_FILE_BYTES;
+  const src = await window.pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  const n = src.numPages;
+  const ladder = [[1800, 0.72], [1400, 0.6], [1100, 0.5], [850, 0.42]];   // [longest page edge in px, JPEG quality]
+  const cv = document.createElement('canvas'), ctx = cv.getContext('2d');
+  try {
+    for (let s = 0; s < ladder.length; s++) {
+      const [edge, q] = ladder[s];
+      const pages = []; let total = 0, overflow = false;
+      for (let p = 1; p <= n; p++) {
+        onStep(`Compressing PDF… page ${p} of ${n}${s ? ` (pass ${s + 1})` : ''}`, (s + (p - 1) / n) / ladder.length);
+        const page = await src.getPage(p);
+        const base = page.getViewport({ scale: 1 });
+        const vp = page.getViewport({ scale: Math.min(3, edge / Math.max(base.width, base.height)) });
+        cv.width = Math.ceil(vp.width); cv.height = Math.ceil(vp.height);
+        ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+        await page.render({ canvasContext: ctx, viewport: vp }).promise;
+        page.cleanup();
+        const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', q));
+        if (!blob) throw new Error('encode');
+        total += blob.size;
+        if (total > limit) { overflow = true; break; }          // this pass can't fit — go to the next, smaller one
+        pages.push({ buf: await blob.arrayBuffer(), w: base.width, h: base.height });
+      }
+      if (overflow) continue;
+      const out = await window.PDFLib.PDFDocument.create();
+      for (const pg of pages) {
+        const img = await out.embedJpg(pg.buf);
+        out.addPage([pg.w, pg.h]).drawImage(img, { x: 0, y: 0, width: pg.w, height: pg.h });
+      }
+      const bytes = await out.save();
+      if (bytes.length <= limit) return new Blob([bytes], { type: 'application/pdf' });
+    }
+    return null;
+  } finally { src.destroy(); cv.width = cv.height = 0; }
 }
 const toBase64 = blob => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = () => rej(new Error('read')); r.readAsDataURL(blob); });
 
@@ -1073,14 +1132,23 @@ const Upload = {
   async one(id, item, row) {
     const set = (status, extra = {}) => { Object.assign(item, { status }, extra); this.patch(id, item); };
     try {
-      let blob = item.file, name = item.file.name;
+            let blob = item.file, name = item.file.name;
       const mime0 = CONFIG.ALLOWED_EXT[extOf(name)];
-      if (mime0.startsWith('image/') && (blob.size > CONFIG.COMPRESS_ABOVE || blob.size > CONFIG.MAX_FILE_BYTES)) {
-        set('preparing', { note: 'Optimising image…' });
-        let small = null; try { small = await shrinkImage(blob); } catch { /* fall back to original */ }
-        if (small && small.size < blob.size) { item.note = `Optimised ${fmtBytes(blob.size)} → ${fmtBytes(small.size)}`; blob = small; name = name.replace(/\.[a-z0-9]+$/i, '') + '.jpg'; }
+      if (blob.size > CONFIG.MAX_FILE_BYTES) {                       // over the limit → compress automatically
+        const isImg = mime0.startsWith('image/');
+        set('preparing', { note: isImg ? 'Compressing image…' : 'Compressing PDF…', progress: 0.04 });
+        let small = null;
+        try {
+          small = isImg ? await shrinkImage(blob)
+                        : await shrinkPdf(blob, (msg, f) => { item.note = msg; item.progress = Math.max(0.04, f); this.patch(id, item); });
+        } catch (err) { console.warn('Compression failed:', err); }
+        if (small && small.size < blob.size) {
+          item.note = `Compressed ${fmtBytes(blob.size)} → ${fmtBytes(small.size)}`;
+          blob = small;
+          if (isImg) name = name.replace(/\.[a-z0-9]+$/i, '') + '.jpg';
+        }
       }
-      if (blob.size > CONFIG.MAX_FILE_BYTES) throw new ApiError('TOO_LARGE', `File is still ${fmtBytes(blob.size)} — the limit is ${fmtBytes(CONFIG.MAX_FILE_BYTES)}.`);
+      if (blob.size > CONFIG.MAX_FILE_BYTES) throw new ApiError('TOO_LARGE', `File is still ${fmtBytes(blob.size)} after compression — the limit is ${fmtBytes(CONFIG.MAX_FILE_BYTES)}.`);
       const mimeType = CONFIG.ALLOWED_EXT[extOf(name)];
       const data = await toBase64(blob);
 
@@ -1174,7 +1242,7 @@ const Drawer = {
     const skip = new Set(['project']);
     $('#dKv').innerHTML = state.cols.filter(c => !skip.has(c.key) && !isBlank(r[c.key])).map(c => `<div class="kv ${c.key === 'workName' || c.key === 'remarks' ? 'wide' : ''}"><dt>${esc(c.label)}</dt><dd>${esc(r[c.key])}</dd></div>`).join('');
     $('#dLimit').textContent = `PDF · JPG · PNG · WebP — up to ${fmtBytes(CONFIG.MAX_FILE_BYTES)} each`;
-    $('#dropHint').textContent = 'Photos over ' + fmtBytes(CONFIG.COMPRESS_ABOVE) + ' are optimised automatically';
+    $('#dropHint').textContent = 'Files over ' + fmtBytes(CONFIG.MAX_FILE_BYTES) + ' (PDF or photo) are compressed automatically';
     this.renderDocs(); Upload.render(r.id);
   },
   renderDocs() {
