@@ -55,7 +55,7 @@ a{color:var(--brand-600)}
 /* ==========================================================================
    3. APP BAR
    ========================================================================== */
-.appbar{position:relative;overflow:hidden;color:#fff;padding:16px 0 104px;
+.appbar{position:relative;overflow:hidden;color:#fff;padding:16px 0 84px;
   background:linear-gradient(118deg,#0A2A35 0%,#0F4C5C 52%,#1B6F7A 100%)}
 .appbar::before{content:"";position:absolute;inset:0;opacity:.16;pointer-events:none;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='720' height='360' viewBox='0 0 720 360' fill='none' stroke='white' stroke-width='1'%3E%3Cpath d='M-20 120C90 70 150 170 280 130S470 20 580 70s130 70 160 40'/%3E%3Cpath d='M-20 150C95 100 155 200 285 162S475 52 585 102s130 70 160 40'/%3E%3Cpath d='M-20 180C100 130 160 230 290 194S480 84 590 134s130 70 160 40'/%3E%3Cpath d='M-20 210C105 160 165 260 295 226S485 116 595 166s130 70 160 40'/%3E%3Cpath d='M-20 240C110 190 170 290 300 258S490 148 600 198s130 70 160 40'/%3E%3Cpath d='M-20 270C115 220 175 320 305 290S495 180 605 230s130 70 160 40'/%3E%3C/svg%3E");
@@ -112,7 +112,7 @@ a{color:var(--brand-600)}
    ========================================================================== */
 main{padding-bottom:48px}
 .panel{background:var(--surface);border:1px solid var(--line-2);border-radius:var(--r);box-shadow:var(--shadow-1)}
-.toolbar{margin-top:16px;padding:14px}
+.toolbar{position:relative;margin-top:-52px;padding:14px}
 .tools{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
 .search{position:relative;flex:1 1 300px;min-width:0}
 .search .ic{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--ink-3);pointer-events:none}
@@ -364,7 +364,7 @@ tr.empty{cursor:default}
 }
 @media (max-width:760px){
   .wrap{width:calc(100% - 28px)}
-  .appbar{padding-bottom:96px}
+  .appbar{padding-bottom:80px}
   .hero{margin-top:24px}
   .sync-pill .txt-long{display:none}
   .kpi{padding:14px}
@@ -414,6 +414,9 @@ tr.empty{cursor:default}
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
 }
+
+.ms-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
 </style>
 </head>
 
@@ -464,28 +467,6 @@ tr.empty{cursor:default}
 </header>
 
 <main id="main" class="wrap">
-  <section class="kpis" aria-label="Summary">
-    <article class="kpi">
-      <div class="kpi-top"><span>Work orders</span><span class="kpi-icon"><svg class="ic"><use href="#i-layers"/></svg></span></div>
-      <div class="kpi-value" id="kTotal" data-v="0">0</div>
-      <div class="kpi-foot" id="kTotalFoot"></div>
-    </article>
-    <article class="kpi">
-      <div class="kpi-top"><span>Sites</span><span class="kpi-icon"><svg class="ic"><use href="#i-pin"/></svg></span></div>
-      <div class="kpi-value" id="kSites" data-v="0">0</div>
-      <div class="kpi-foot" id="kSitesFoot"></div>
-    </article>
-    <article class="kpi">
-      <div class="kpi-top"><span>Customers</span><span class="kpi-icon"><svg class="ic"><use href="#i-users"/></svg></span></div>
-      <div class="kpi-value" id="kCust" data-v="0">0</div>
-      <div class="kpi-foot" id="kCustFoot"></div>
-    </article>
-    <article class="kpi">
-      <div class="kpi-top"><span>Documents on file</span><span class="kpi-icon"><svg class="ic"><use href="#i-folder"/></svg></span></div>
-      <div class="kpi-value" id="kDocs" data-v="0">0</div>
-      <div class="kpi-foot"><div class="bar"><i id="kBar"></i></div><span id="kDocsFoot"></span></div>
-    </article>
-  </section>
 
   <section class="panel toolbar" aria-label="Search and filters">
     <div class="tools">
@@ -504,7 +485,6 @@ tr.empty{cursor:default}
           <div class="ms-foot"><span>Show / hide columns</span><button type="button" class="link" id="colReset">Reset</button></div>
         </div>
       </div>
-      <button class="btn btn-export" id="exportBtn" type="button" title="Download the current results as CSV"><svg class="ic"><use href="#i-download"/></svg><span>Export CSV</span></button>
     </div>
     <div class="facets" id="facets"></div>
     <div class="chips" id="chips" aria-label="Active filters"></div>
@@ -843,7 +823,7 @@ function renderChips() {
 }
 function clearAllFilters() {
   state.q = ''; $('#q').value = '';
-  Object.values(state.facets).forEach(s => s.clear()); state.typeSel.clear(); state.docs = 'all'; $('#docsSel').value = 'all';
+  Object.values(state.facets).forEach(s => s.clear()); state.typeSel.clear();
   syncFacets();
 }
 function syncFacets() { Object.entries(facetUI).forEach(([k, ui]) => { ui.sel = state.facets[k]; ui.sync(); ui.renderList(); }); }
@@ -933,7 +913,7 @@ function syncSortSelect() {
 
 function render({ animate = true } = {}) {
   recompute();
-  renderKpis(); renderChips(); renderTypeSeg(); renderHead(); renderBody(animate); renderPager(); syncSortSelect();
+  renderChips(); renderTypeSeg(); renderHead(); renderBody(animate); renderPager(); syncSortSelect();
 }
 
 /* ==========================================================================
@@ -950,7 +930,7 @@ function updateSyncText() {
   const t = $('#syncText'), s = state.status;
   if (s === 'loading') t.innerHTML = state.syncedAt ? 'Refreshing…' : 'Connecting…';
   else if (s === 'error') t.innerHTML = state.syncedAt ? `<span class="txt-long">Offline · last synced </span>${timeAgo(state.syncedAt)}` : 'Not connected';
-  else t.innerHTML = state.syncedAt ? `<span class="txt-short">Synced </span><span class="txt-long">with Google Sheets · </span>${timeAgo(state.syncedAt)}` : '';
+  else t.innerHTML = state.syncedAt ? `Updated ${timeAgo(state.syncedAt)}` : '';
 }
 function banner(kind, title, html, action) {
   $('#banner').innerHTML = kind ? `<div class="banner ${kind}" role="${kind === 'error' ? 'alert' : 'note'}">${icon('alert')}<div><strong>${esc(title)}</strong><p>${html}</p></div>${action ? `<button class="btn" type="button" id="bannerAction">${esc(action)}</button>` : ''}</div>` : '';
@@ -974,7 +954,7 @@ function ingest(data) {
     state.facets[k] = new Set([...prev].filter(v => counts.has(v)));
     const opts = [...counts].map(([value, count]) => ({ value, count })).sort((a, b) => collator.compare(a.value, b.value));
     if (!facetUI[k]) {
-      facetUI[k] = new MultiSelect(k, state.cols.find(c => c.key === k).label.split(' / ')[0].replace('Direct Responsible Person', 'Responsible').replace('Cluster Head', 'Cluster head'), () => { state.facets[k] = facetUI[k].sel; state.page = 1; render(); });
+      facetUI[k] = new MultiSelect(k, ({ site: 'Site', clusterHead: 'Cluster Head / Representative', responsible: 'Direct Responsible Person' })[k] || state.cols.find(c => c.key === k).label.split(' / ')[0], () => { state.facets[k] = facetUI[k].sel; state.page = 1; render(); });
       $('#facets').insertBefore(facetUI[k].el, $('#docsWrap'));
     }
     facetUI[k].setOptions(opts, state.facets[k]);
@@ -1240,12 +1220,6 @@ function bind() {
     state.page = 1; render();
   });
 
-  // documents filter
-  const dw = document.createElement('div'); dw.id = 'docsWrap';
-  dw.innerHTML = `<select id="docsSel" class="field" style="height:38px" aria-label="Document status"><option value="all">Documents: all</option><option value="with">Documents: on file</option><option value="without">Documents: missing</option></select>`;
-  $('#facets').appendChild(dw);
-  $('#docsSel').onchange = e => { state.docs = e.target.value; state.page = 1; render(); };
-
   // chips + empty state clear
   document.addEventListener('click', e => {
     const x = e.target.closest('.chip button');
@@ -1285,8 +1259,7 @@ function bind() {
   $('#colReset').onclick = () => { state.hidden.clear(); savePrefs(); buildColumnMenu(); render({ animate: false }); };
 
   // export / refresh
-  $('#exportBtn').onclick = exportCsv;
-  $('#refreshBtn').onclick = () => configured() ? refresh().then(() => state.status === 'ok' && Toast.show('success', 'Up to date', 'Latest data loaded from Google Sheets.', 2400)) : null;
+  $('#refreshBtn').onclick = () => configured() ? refresh().then(() => state.status === 'ok' && Toast.show('success', 'Up to date', 'Latest data loaded.', 2400)) : null;
 
   // table rows
   const tb = $('#tbody');
