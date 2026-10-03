@@ -642,22 +642,29 @@ const Api = {
       throw new ApiError('NETWORK', 'Could not reach the server. Check your connection.');
     } finally { clearTimeout(timer); }
   },
-  upload(payload, onProgress) {
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', CONFIG.API_URL);
-      xhr.setRequestHeader('Content-Type', 'text/plain;charset=utf-8');   // “simple” request → no CORS pre-flight
-            xhr.timeout = 300000;
-      xhr.upload.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
-      xhr.upload.onload = () => onProgress(1);
-      xhr.onload = () => {
-        let data; try { data = JSON.parse(xhr.responseText); } catch { return reject(new ApiError('FORMAT', 'Unexpected response from the server. The file may not have been saved — please check before retrying.')); }
-        data.ok ? resolve(data) : reject(new ApiError(data.error?.code || 'SERVER', data.error?.message || 'Upload failed.'));
-      };
-      xhr.onerror = () => reject(new ApiError('NETWORK', 'Network error while uploading. Check your connection and retry.'));
-      xhr.ontimeout = () => reject(new ApiError('TIMEOUT', 'The upload timed out. Try a smaller file or a better connection.'));
-      xhr.send(JSON.stringify(payload));
-    });
+    async upload(payload, onProgress) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 300000);
+    try {
+      const pending = fetch(CONFIG.API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload),
+        signal: ctl.signal
+      });
+      onProgress(1);
+      const res = await pending;
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); }
+      catch { throw new ApiError('FORMAT', 'Unexpected response from the server. The file may not have been saved — please check before retrying.'); }
+      if (!data.ok) throw new ApiError(data.error?.code || 'SERVER', data.error?.message || 'Upload failed.');
+      return data;
+    } catch (e) {
+      if (e instanceof ApiError) throw e;
+      if (e.name === 'AbortError') throw new ApiError('TIMEOUT', 'The upload timed out. Try a smaller file or a better connection.');
+      throw new ApiError('NETWORK', 'Network error while uploading. Check your connection and retry.');
+    } finally { clearTimeout(timer); }
   }
 };
 
